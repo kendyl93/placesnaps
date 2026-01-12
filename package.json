@@ -1,0 +1,16 @@
+{
+  "name": "placesnaps",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm -C apps/api start:dev & pnpm -C apps/web dev",
+    "dev:web": "pnpm -C apps/web dev",
+    "dev:api": "pnpm -C apps/api start:dev"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "packageManager": "pnpm@10.13.1"
+}
