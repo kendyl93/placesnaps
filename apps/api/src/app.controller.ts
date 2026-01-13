@@ -31,4 +31,13 @@ export class AppController {
 
     return post;
   }
+
+  @Get('feed')
+  async feed() {
+    return this.prisma.post.findMany({
+      where: { expiresAt: { gt: new Date() } },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
+  }
 }
