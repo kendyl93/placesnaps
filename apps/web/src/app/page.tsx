@@ -1,43 +1,121 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { supabase } from "@/lib/supabase";
+
+type PostItem = {
+  id: string;
+  mediaUrl: string | null;
+  lat: number;
+  lng: number;
+  createdAt: string;
+  expiresAt: string;
+};
 
 export default function Home() {
-  const [health, setHealth] = useState<string | null>(null);
+  const [status, setStatus] = useState<string>("");
+  const [feed, setFeed] = useState<PostItem[]>([]);
+
+  async function loadFeed() {
+    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/feed`, {
+      cache: "no-store",
+    });
+    if (!res.ok) throw new Error(await res.text());
+    setFeed(await res.json());
+  }
 
   useEffect(() => {
-    fetch(process.env.NEXT_PUBLIC_API_URL + "/health")
-      .then((r) => r.json())
-      .then((data) => {
-        setHealth(data.ok ? "ok" : "not ok");
-      })
-      .catch(() => setHealth("error"));
+    loadFeed().catch((e) => setStatus(`Feed error: ${e.message}`));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      setStatus("Getting location...");
+      const pos = await new Promise<GeolocationPosition>((resolve, reject) =>
+        navigator.geolocation.getCurrentPosition(resolve, reject, {
+          enableHighAccuracy: true,
+          timeout: 10000,
+        })
+      );
+
+      setStatus("Uploading image...");
+      const ext = file.name.split(".").pop() || "jpg";
+      const path = `public/${crypto.randomUUID()}.${ext}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from("posts")
+        .upload(path, file, { contentType: file.type, upsert: false });
+
+      if (uploadError) throw uploadError;
+
+      const { data } = supabase.storage.from("posts").getPublicUrl(path);
+      const mediaUrl = data.publicUrl;
+
+      setStatus("Saving post...");
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/posts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+          mediaUrl,
+        }),
+      });
+
+      if (!res.ok) throw new Error(await res.text());
+
+      setStatus("Posted ✅");
+      await loadFeed();
+    } catch (err: any) {
+      setStatus(`Error: ${err?.message ?? String(err)}`);
+    } finally {
+      e.target.value = "";
+    }
+  }
+
   return (
-    <main style={{ padding: 24, fontFamily: "system-ui" }}>
+    <main
+      style={{
+        padding: 24,
+        fontFamily: "system-ui",
+        maxWidth: 520,
+        margin: "0 auto",
+      }}
+    >
       <h1>PlaceSnaps</h1>
-      <p>API health: {health ? "ok" : "nope"}</p>
 
-      <button style={{ padding: "10px 14px", borderRadius: 10 }}>
-        Leave one
-      </button>
+      <input type="file" accept="image/*" onChange={handleFile} />
+      <p>{status}</p>
 
-      <div style={{ marginTop: 24, display: "grid", gap: 16 }}>
-        {[1, 2, 3].map((i) => (
+      <div style={{ display: "grid", gap: 16, marginTop: 16 }}>
+        {feed.map((p) => (
           <div
-            key={i}
+            key={p.id}
             style={{
-              height: 420,
-              borderRadius: 16,
               border: "1px solid #ddd",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              color: "#666",
+              borderRadius: 16,
+              overflow: "hidden",
             }}
           >
-            Post #{i} (image placeholder)
+            {p.mediaUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={p.mediaUrl}
+                alt=""
+                style={{ width: "100%", display: "block" }}
+              />
+            ) : (
+              <div style={{ padding: 24, color: "#666" }}>No media</div>
+            )}
+
+            <div style={{ padding: 12, fontSize: 12, color: "#666" }}>
+              {new Date(p.createdAt).toLocaleString()} • {p.lat.toFixed(4)},
+              {p.lng.toFixed(4)}
+            </div>
           </div>
         ))}
       </div>
