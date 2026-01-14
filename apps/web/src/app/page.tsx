@@ -12,9 +12,52 @@ type PostItem = {
   expiresAt: string;
 };
 
+/**
+ * Geolocation helper:
+ * - never hangs
+ * - timeout
+ * - cache allowed
+ * - no high accuracy (mobile-safe)
+ */
+function getLocation(): Promise<{ lat: number; lng: number }> {
+  return new Promise((resolve, reject) => {
+    if (!("geolocation" in navigator)) {
+      reject(new Error("Geolocation not supported"));
+      return;
+    }
+
+    const timeoutId = setTimeout(() => {
+      reject(new Error("Location timeout"));
+    }, 8000);
+
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        clearTimeout(timeoutId);
+        resolve({
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+        });
+      },
+      (err) => {
+        clearTimeout(timeoutId);
+        if (err.code === err.PERMISSION_DENIED)
+          reject(new Error("Location permission denied"));
+        else if (err.code === err.POSITION_UNAVAILABLE)
+          reject(new Error("Location unavailable"));
+        else reject(new Error("Location error"));
+      },
+      {
+        enableHighAccuracy: false,
+        maximumAge: 60_000,
+      }
+    );
+  });
+}
+
 export default function Home() {
   const [status, setStatus] = useState<string>("");
   const [feed, setFeed] = useState<PostItem[]>([]);
+  const [uploading, setUploading] = useState(false);
 
   async function loadFeed() {
     const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/feed`, {
@@ -31,16 +74,19 @@ export default function Home() {
 
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
-    if (!file) return;
+    if (!file || uploading) return;
+
+    setUploading(true);
 
     try {
       setStatus("Getting location...");
-      const pos = await new Promise<GeolocationPosition>((resolve, reject) =>
-        navigator.geolocation.getCurrentPosition(resolve, reject, {
-          enableHighAccuracy: true,
-          timeout: 10000,
-        })
-      );
+      let coords: { lat: number; lng: number } | null = null;
+
+      try {
+        coords = await getLocation();
+      } catch (locErr: any) {
+        setStatus(`Location issue: ${locErr.message}. Posting anyway…`);
+      }
 
       setStatus("Uploading image...");
       const ext = file.name.split(".").pop() || "jpg";
@@ -48,7 +94,10 @@ export default function Home() {
 
       const { error: uploadError } = await supabase.storage
         .from("posts")
-        .upload(path, file, { contentType: file.type, upsert: false });
+        .upload(path, file, {
+          contentType: file.type,
+          upsert: false,
+        });
 
       if (uploadError) throw uploadError;
 
@@ -60,8 +109,8 @@ export default function Home() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          lat: pos.coords.latitude,
-          lng: pos.coords.longitude,
+          lat: coords?.lat ?? 0,
+          lng: coords?.lng ?? 0,
           mediaUrl,
         }),
       });
@@ -74,6 +123,7 @@ export default function Home() {
       setStatus(`Error: ${err?.message ?? String(err)}`);
     } finally {
       e.target.value = "";
+      setUploading(false);
     }
   }
 
@@ -88,8 +138,14 @@ export default function Home() {
     >
       <h1>PlaceSnaps</h1>
 
-      <input type="file" accept="image/*" onChange={handleFile} />
-      <p>{status}</p>
+      <input
+        type="file"
+        accept="image/*"
+        onChange={handleFile}
+        disabled={uploading}
+      />
+
+      <p style={{ minHeight: 24 }}>{status}</p>
 
       <div style={{ display: "grid", gap: 16, marginTop: 16 }}>
         {feed.map((p) => (
@@ -113,8 +169,10 @@ export default function Home() {
             )}
 
             <div style={{ padding: 12, fontSize: 12, color: "#666" }}>
-              {new Date(p.createdAt).toLocaleString()} • {p.lat.toFixed(4)},
-              {p.lng.toFixed(4)}
+              {new Date(p.createdAt).toLocaleString()} •{" "}
+              {p.lat !== 0 || p.lng !== 0
+                ? `${p.lat.toFixed(4)}, ${p.lng.toFixed(4)}`
+                : "no location"}
             </div>
           </div>
         ))}
