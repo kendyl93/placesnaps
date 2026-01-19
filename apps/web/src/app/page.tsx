@@ -49,7 +49,7 @@ function getLocation(): Promise<{ lat: number; lng: number }> {
       {
         enableHighAccuracy: false,
         maximumAge: 60_000,
-      }
+      },
     );
   });
 }
@@ -59,16 +59,28 @@ export default function Home() {
   const [feed, setFeed] = useState<PostItem[]>([]);
   const [uploading, setUploading] = useState(false);
 
-  async function loadFeed() {
-    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/feed`, {
-      cache: "no-store",
-    });
+  async function loadFeed(coords?: { lat: number; lng: number } | null) {
+    const url = new URL(`${process.env.NEXT_PUBLIC_API_URL}/feed`);
+    if (coords) {
+      url.searchParams.set("lat", String(coords.lat));
+      url.searchParams.set("lng", String(coords.lng));
+    }
+
+    const res = await fetch(url.toString(), { cache: "no-store" });
     if (!res.ok) throw new Error(await res.text());
     setFeed(await res.json());
   }
 
   useEffect(() => {
-    loadFeed().catch((e) => setStatus(`Feed error: ${e.message}`));
+    (async () => {
+      try {
+        // best-effort: jak nie działa, po prostu pokaż createdAt desc
+        const coords = await getLocation();
+        await loadFeed(coords);
+      } catch {
+        await loadFeed(null);
+      }
+    })().catch((e) => setStatus(`Feed error: ${e.message}`));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
